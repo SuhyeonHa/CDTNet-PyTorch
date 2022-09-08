@@ -9,6 +9,27 @@ import torch.nn as nn
 import os
 import torch.nn.functional as F
 from util.tools import *
+from skimage import color
+import cv2
+
+def lab2rgb(LAB):
+        """Convert an Lab tensor image to a RGB numpy output
+        Parameters:
+            L  (1-channel tensor array): L channel images (range: [-1, 1], torch tensor array)
+            AB (2-channel tensor array):  ab channel images (range: [-1, 1], torch tensor array)
+        Returns:
+            rgb (RGB numpy image): rgb output images  (range: [0, 255], numpy array)
+        """
+        L = LAB[None,0,:,:]
+        AB = LAB[1:3,:,:]
+        AB2 = AB * 110.0
+        L2 = (L + 1.0) * 50.0
+        Lab = torch.cat([L2, AB2], dim=0)
+        # Lab = Lab[0].data.cpu().float().numpy()
+        Lab = Lab.cpu().float().numpy()
+        Lab = np.transpose(Lab.astype(np.float64), (1, 2, 0))
+        rgb = color.lab2rgb(Lab) * 255
+        return rgb
 
 def tensor2im(input_image, imtype=np.uint8):
     """"Converts a Tensor array into a numpy image array.
@@ -26,10 +47,41 @@ def tensor2im(input_image, imtype=np.uint8):
         if image_numpy.shape[0] == 1:  # grayscale to RGB
             image_numpy = np.tile(image_numpy, (3, 1, 1))
         image_numpy = (np.transpose(image_numpy, (1, 2, 0)) + 0) / 1.0 * 255.0  # post-processing: tranpose and scaling
+        # image_numpy = (np.transpose(image_numpy, (1, 2, 0)) + 1) / 2.0 * 255.0  # post-processing: tranpose and scaling
     else:  # if it is a numpy array, do nothing
         image_numpy = input_image
     image_numpy = np.clip(image_numpy, 0,255)
     return image_numpy.astype(imtype)
+
+# LAB visualize
+# def tensor2im(input_image, imtype=np.uint8):
+#     """
+#     lab -> rgb added for 3-channel image
+#     """
+#     """"Converts a Tensor array into a numpy image array.
+
+#     Parameters:
+#         input_image (tensor) --  the input image tensor array
+#         imtype (type)        --  the desired type of the converted numpy array
+#     """
+#     if not isinstance(input_image, np.ndarray):
+#         if isinstance(input_image, torch.Tensor):  # get the data from a variable
+#             image_tensor = input_image.data
+#         else:
+#             return input_image
+#         image_numpy = image_tensor[0]#.cpu().float().numpy()  # convert it into a numpy array
+#         if image_numpy.shape[0] == 1:  # grayscale to RGB
+#             image_numpy = image_numpy.cpu().float().numpy()
+#             image_numpy = np.tile(image_numpy, (3, 1, 1))
+#             image_numpy = (np.transpose(image_numpy, (1, 2, 0)) + 0) / 1.0 * 255.0
+#         # image_numpy = (np.transpose(image_numpy, (1, 2, 0)) + 0) / 1.0 * 255.0  # post-processing: tranpose and scaling
+#         else:
+#             image_numpy = lab2rgb(image_numpy)
+ 
+#     else:  # if it is a numpy array, do nothing
+#         image_numpy = input_image
+#     image_numpy = np.clip(image_numpy, 0,255)
+#     return image_numpy.astype(imtype)
 
 def retry_load_images(image_paths, retry=10, backend="pytorch"):
     """

@@ -1,4 +1,6 @@
+from operator import truediv
 import os
+from pickle import TRUE
 import torch
 from collections import OrderedDict
 from abc import ABC, abstractmethod
@@ -90,7 +92,14 @@ class BaseModel(ABC):
         if not self.isTrain or opt.continue_train:
             load_suffix = 'iter_%d' % opt.load_iter if opt.load_iter > 0 else opt.epoch
             self.load_networks(load_suffix)
+        # if opt.pretrained_inpaint_model:
+        #     self.load_pre_networks('inpaint', opt.pretrained_inpaint_model)
+        # if opt.pretrained_stn_model:
+        #     self.load_pre_networks('stn', opt.pretrained_stn_model)
         self.print_networks(opt.verbose)
+        # self.set_requires_grad(self.netE, requires_grad=True)
+        # self.set_requires_grad(self.netG, requires_grad=True)
+        # self.set_requires_grad(self.stn, requires_grad=False)
 
     def eval(self):
         """Make models eval mode during test time"""
@@ -128,12 +137,17 @@ class BaseModel(ABC):
         lr = self.optimizers[0].param_groups[0]['lr']
         print('learning rate = %.7f' % lr)
 
-    def get_current_visuals(self):
+    def get_current_visuals(self, isTrain=True):
         """Return visualization images. train.py will display these images with visdom, and save the images to a HTML"""
         visual_ret = OrderedDict()
-        for name in self.visual_names:
-            if isinstance(name, str):
-                visual_ret[name] = getattr(self, name)
+        if isTrain:
+            for name in self.visual_names:
+                if isinstance(name, str):
+                    visual_ret[name] = getattr(self, name)
+        else:
+            for name in self.test_visual_names:
+                if isinstance(name, str):
+                    visual_ret[name] = getattr(self, name)
         return visual_ret
 
     def get_current_losses(self):
@@ -170,7 +184,7 @@ class BaseModel(ABC):
                 net = getattr(self, 'net' + name)
                 if torch.cuda.is_available():
                     if self.NUM_GPUS > 1:
-                        torch.save(net.module.state_dict(), save_path)
+                        torch.save(net.module.state_dict(), save_path) #TODO: only for stn
                     else:
                         torch.save(net.state_dict(), save_path)
                 else:
@@ -199,10 +213,33 @@ class BaseModel(ABC):
         for name in self.model_names:
             if isinstance(name, str):
                 if name == 'D':
-                    continue # TODO: Added by Matt
+                    continue # TOD0: Added by Matt
                 load_filename = '%s_net_%s.pth' % (epoch, name)
                 load_path = os.path.join(self.save_dir, load_filename)
                 net = getattr(self, 'net' + name)
+                if isinstance(net, torch.nn.DataParallel) or isinstance(net, torch.nn.parallel.DistributedDataParallel):
+                    net = net.module
+                print('loading the model from %s' % load_path)
+                # if you are using PyTorch newer than 0.4 (e.g., built from
+                # GitHub source), you can remove str() on self.device
+                state_dict = torch.load(load_path, map_location=str(self.device))
+                if hasattr(state_dict, '_metadata'):
+                    del state_dict._metadata
+
+                # patch InstanceNorm checkpoints prior to 0.4
+                for key in list(state_dict.keys()):  # need to copy keys here because we mutate in loop
+                    self.__patch_instance_norm_state_dict(state_dict, net, key.split('.'))
+                net.load_state_dict(state_dict, strict=False)
+                
+    def load_pre_networks(self, model_name, load_path):
+        """Load all the networks from the disk.
+
+        Parameters:
+            epoch (int) -- current epoch; used in the file name '%s_net_%s.pth' % (epoch, name)
+        """
+        for name in self.model_names:
+            if isinstance(name, str):
+                net = getattr(self, model_name)
                 if isinstance(net, torch.nn.DataParallel) or isinstance(net, torch.nn.parallel.DistributedDataParallel):
                     net = net.module
                 print('loading the model from %s' % load_path)

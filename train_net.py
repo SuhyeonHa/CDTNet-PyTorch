@@ -109,9 +109,9 @@ def test(cfg):
     for i, data in enumerate(dataset):
         model.set_input(data)  # unpack data from data loader
         model.test()           # run inference
-        visuals = model.get_current_visuals()  # get image results
-        
-        img_path = model.get_image_paths()     # get image paths # Added by Mia
+        visuals = model.get_current_visuals(isTrain=False)  # get image results
+        # img_path = model.get_image_paths()     # get image paths # Added by Mia
+        img_path = dataset.dataset.image_paths     # get image paths # Added by Mia
         if i % 5 == 0 and ismaster:  # save images to an HTML file
             print('processing (%04d)-th image... %s' % (i, img_path))
         visuals_ones = OrderedDict()
