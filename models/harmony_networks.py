@@ -1,3 +1,4 @@
+from glob import glob0
 from gzip import BadGzipFile
 import torch
 import torch.nn as nn
@@ -20,6 +21,17 @@ import math
 ###############################################################################
 # Helper Functions
 ###############################################################################
+
+## EFDM
+def exact_feature_distribution_matching(content_feat, style_feat):
+    assert (content_feat.size() == style_feat.size())
+    B, C, W, H = content_feat.size(0), content_feat.size(1), content_feat.size(2), content_feat.size(3)
+    value_content, index_content = torch.sort(content_feat.view(B,C,-1))  # sort conduct a deep copy here.
+    value_style, _ = torch.sort(style_feat.view(B,C,-1))  # sort conduct a deep copy here.
+    inverse_index = index_content.argsort(-1)
+    new_content = content_feat.view(B,C,-1) + (value_style.gather(-1, inverse_index) - content_feat.view(B,C,-1).detach())
+
+    return new_content.view(B, C, W, H)
 
 def normalize(v):
     if type(v) == list:
@@ -90,24 +102,41 @@ class BaseGenerator(nn.Module):
 
         # self.encoder = MixEncoder(input_nc, output_nc, ngf, norm_layer = norm_layer)
         
-        self.reflectance_dim = 256
+        self.reflectance_dim = 512
         self.encoder = ContentEncoder(opt.n_downsample, opt.enc_n_res, opt.input_nc, self.reflectance_dim, opt.ngf, 'in', opt.activ, opt.pad_type,
                                       opt.spatial_code_ch, opt.global_code_ch)
         # self.generator = MixDecoder(input_nc, output_nc, ngf, norm_layer = norm_layer)
         self.generator = ContentDecoder(opt.n_downsample, opt.dec_n_res, self.encoder.output_dim, opt.output_nc, opt.ngf, 'ln', opt.activ, opt.pad_type,
                                         opt.spatial_code_ch, opt.global_code_ch)
+        # self.translator = StyleVectorizer(opt.global_code_ch, depth=8, lr_mul=0.1)
 
         
-    def forward(self, real, comp, mask):
+    def forward(self, img, mask):
         
-        sp1, fg_gl_1, bg_gl_1 = self.encoder(real, mask)
-        sp2, fg_gl_2, bg_gl_2 = self.encoder(comp, mask)
+        # sp1, fg_gl_1, bg_gl_1 = self.encoder(real, mask)
+        # sp2, fg_gl_2, bg_gl_2 = self.encoder(comp, mask)
         
-        out1 = self.generator(sp1, fg_gl_1, bg_gl_1, mask) #real
-        out2 = self.generator(sp2, fg_gl_2, bg_gl_2, mask) #comp
-        out3 = self.generator(sp2, bg_gl_2, bg_gl_2, mask) #real
-
-        return out1, out2, out3, sp1, sp2
+        # out1 = self.generator(sp1, gl_1) #real -> real
+        # out2 = self.generator(sp2, gl_2) #comp -> comp
+        
+        sp, fgl, bgl = self.encoder(img, mask)
+        
+        # fgl
+        from_fg = self.generator(sp, fgl)
+        from_fg = img*(1-mask) + from_fg*mask
+        
+        from_bg = self.generator(sp, bgl)
+        from_bg = img*(1-mask) + from_bg*mask
+        
+        # trans_gl = self.translator(gl_2)
+        # out3 = self.generator(sp2, trans_gl) #comp -> real
+        
+        # out1 = real*(1-mask) + out1*mask
+        
+        # out3 = comp*(1-mask) + out3*mask
+    
+        
+        return from_fg, from_bg
 
 ##############################################################################
 # Classes
@@ -248,56 +277,100 @@ class ContentEncoder(nn.Module):
         super(ContentEncoder, self).__init__()
         # output_dim = 256, dim = 64
         self.ToMidpoint = []
-        self.ToMidpoint += [Conv2dBlock(input_dim, dim, 7, 1, 3, norm=norm, activation=activ, pad_type=pad_type)]
+        self.ToMidpoint += [Conv2dBlock(input_dim, dim, 7, 1, 3, norm=norm, activation=activ, pad_type=pad_type)] #Conv2dBlock(input_dim, dim, 7, 1, 3, norm=norm, activation=activ, pad_type=pad_type)
         # downsampling blocks
         for i in range(n_downsample):
-            self.ToMidpoint += [Conv2dBlock(dim, 2 * dim, 4, 2, 1, norm=norm, activation=activ, pad_type=pad_type)]
+            self.ToMidpoint += [ResBlock(dim, 2 * dim, 4, 2, 1, norm=norm, activation=activ, pad_type=pad_type)] #Conv2dBlock
             dim *= 2
            
         # residual blocks
-        self.ToMidpoint += [ResBlocks(n_res, dim, norm='ln', activation=activ, pad_type=pad_type)]
-        if not dim == output_dim:
-            self.ToMidpoint += [Conv2dBlock(dim, output_dim, 3, 1, 1, norm=norm, activation=activ, pad_type=pad_type)]
+        # self.ToMidpoint += [ResBlocks(n_res, dim, norm='ln', activation=activ, pad_type=pad_type)]
+        # if not dim == output_dim:
+        #     self.ToMidpoint += [ResBlock(dim, output_dim, 3, 1, 1, norm=norm, activation=activ, pad_type=pad_type)]
         self.ToMidpoint = nn.Sequential(*self.ToMidpoint)
         
         self.ToSpatialCode = nn.Sequential(
-                Conv2dBlock(output_dim, output_dim, 1, 1, 0, norm=norm, activation=activ, pad_type=pad_type),
-                Conv2dBlock(output_dim, spatial_code_ch, 1, 1, 0, norm=norm, activation=activ, pad_type=pad_type)
+                Conv2dBlock(output_dim, spatial_code_ch, 1, 1, 0, norm=norm, activation=activ, pad_type=pad_type),
+                # Conv2dBlock(output_dim, spatial_code_ch, 1, 1, 0, norm=norm, activation=activ, pad_type=pad_type)
         )
         
-        self.ToGlobalFeat = nn.Sequential(
-                Conv2dBlock(output_dim, output_dim*2, 4, 2, 1, norm=norm, activation=activ, pad_type=pad_type),
-                Conv2dBlock(output_dim*2, output_dim*4, 4, 2, 1, norm=norm, activation=activ, pad_type=pad_type)
+        self.ToGlobalFeat_f = nn.Sequential(
+                Conv2dBlock(output_dim, output_dim, 4, 2, 1, norm=norm, activation=activ, pad_type=pad_type),
+                Conv2dBlock(output_dim, output_dim, 4, 2, 1, norm=norm, activation=activ, pad_type=pad_type)
         )
         
-        self.ToGlobalCode = EqualLinear(output_dim*4, global_code_ch)
+        self.ToGlobalFeat_b = nn.Sequential(
+                Conv2dBlock(output_dim, output_dim, 4, 2, 1, norm=norm, activation=activ, pad_type=pad_type),
+                Conv2dBlock(output_dim, output_dim, 4, 2, 1, norm=norm, activation=activ, pad_type=pad_type)
+        )
+        
+
+        # self.ToGlobalCode = EqualLinear(output_dim*3, global_code_ch)
+        self.ToGlobalCode_f = EqualLinear(output_dim, global_code_ch)
+        self.ToGlobalCode_b = EqualLinear(output_dim, global_code_ch)
         self.output_dim = output_dim
         
+        self.fg_mlp = MLP(output_dim, output_dim, 6)
+        self.bg_mlp = MLP(output_dim, output_dim, 6)
+        # self.stddev_mlp = MLP(output_dim, output_dim, 4)
 
     def forward(self, img, mask):
         x = torch.cat((img, mask), dim=1)
         
-        x = self.ToMidpoint(x)
-        sp = self.ToSpatialCode(x)
+        x = self.ToMidpoint(x) # sp = self.ToSpatialCode(x)
+        sp = self.ToSpatialCode(x) # torch.Size([8, 8, 32, 32])
         
+        # x = self.ToGlobalFeat(x)
         down_mask = F.interpolate(mask, size=x.size(2)) #1/2** n_downsample
         fg = down_mask*x
         bg = (1-down_mask)*x
         
-        fg = self.ToGlobalFeat(fg)
-        bg = self.ToGlobalFeat(bg)
+        # gl = self.ToGlobalFeat(x) # torch.Size([8, 512, 8, 8])
+        fg = self.ToGlobalFeat_f(fg)
+        bg = self.ToGlobalFeat_b(bg)
         
-        fg = fg.mean(dim=(2,3))
-        bg = bg.mean(dim=(2,3))
+        fg = self.fg_mlp(fg.mean(dim=(2,3)))
+        bg = self.bg_mlp(bg.mean(dim=(2,3)))
         
-        fg_gl = self.ToGlobalCode(fg)
-        bg_gl = self.ToGlobalCode(bg)
+        # fg_stats = self.extract_stats(fg)
+        # bg_stats = self.extract_stats(bg)
+        
+        # fg_gl = self.ToGlobalCode(fg_stats)
+        # bg_gl = self.ToGlobalCode(bg_stats)
+
+        # fg = fg.mean(dim=(2,3))
+        # bg = bg.mean(dim=(2,3))
+        
+        # stats = torch.cat([gap, gmp, stddev], dim=1) #torch.Size([8, 1536])
+        
+        # gl = self.ToGlobalCode(stats) #torch.Size([8, 2048])
+        fg_gl = self.ToGlobalCode_f(fg)
+        bg_gl = self.ToGlobalCode_b(bg)
         
         sp = normalize(sp)
+        # gl = normalize(gl)
         fg_gl = normalize(fg_gl)
         bg_gl = normalize(bg_gl)
         
-        return sp, fg_gl, bg_gl
+        return sp, fg_gl, bg_gl #gl
+    
+    def extract_stats(self, gl):
+        gap = F.adaptive_avg_pool2d(gl, 1) #torch.Size([8, 512, 1, 1])
+        gap = gap.squeeze(3).squeeze(2) #torch.Size([8, 512])
+        gap = self.mean_mlp(gap) #torch.Size([8, 512])
+
+        gmp = F.adaptive_max_pool2d(gl, 1)
+        gmp = gmp.squeeze(3).squeeze(2)
+        gmp = self.max_mlp(gmp) 
+        
+        diff_square = torch.square(gl - F.adaptive_avg_pool2d(gl, 1))
+        stddev = torch.sqrt(F.adaptive_avg_pool2d(diff_square, 1))
+        stddev = stddev.squeeze(3).squeeze(2)
+        stddev = self.stddev_mlp(stddev)
+        stats = torch.cat([gap, gmp, stddev], dim=1)
+        return stats
+
+    
 
 class ContentDecoder(nn.Module):
     def __init__(self, n_downsample, n_res, input_dim, output_dim, dim, norm, activ, pad_type, spatial_code_ch, global_code_ch):
@@ -306,11 +379,14 @@ class ContentDecoder(nn.Module):
         dim = input_dim
         
         self.IntoFeature = GeneratorModulation(global_code_ch, spatial_code_ch)
-        
-        self.gen1 = GeneratorBlock(global_code_ch, spatial_code_ch, dim, upsample = True)
-        self.gen2 = GeneratorBlock(global_code_ch, dim, dim // 2, upsample = True)
-        self.gen3 = GeneratorBlock(global_code_ch, dim // 2, dim // 4, upsample = True)
-        self.out = Conv2dBlock(dim // 4, output_dim, 3, 1, 1, norm='none', activation='tanh', pad_type=pad_type)
+                
+        # self.gen0 = GeneratorBlock(global_code_ch, spatial_code_ch, dim//2, upsample = False)
+        # self.gen2 = GeneratorBlock(global_code_ch, dim//4, dim//2, upsample = False)
+        self.gen1 = GeneratorBlock(global_code_ch, dim*2, dim, upsample = False)
+        self.gen2 = GeneratorBlock(global_code_ch, dim, dim//2, upsample = True)
+        self.gen3 = GeneratorBlock(global_code_ch, dim//2, dim // 4, upsample = True)
+        self.gen4 = GeneratorBlock(global_code_ch, dim // 4, dim // 8, upsample = True)
+        self.out = Conv2dBlock(dim // 8, output_dim, 3, 1, 1, norm='none', activation='tanh', pad_type=pad_type)
         
         # self.ToRGB = nn.Sequential(
         #     GeneratorBlock(global_code_ch, spatial_code_ch, dim, upsample = True),
@@ -337,23 +413,32 @@ class ContentDecoder(nn.Module):
         # self.model += [Conv2dBlock(dim, output_dim, 7, 1, 3, norm='none', activation='tanh', pad_type=pad_type)]
         # self.model = nn.Sequential(*self.model)
 
-    def forward(self, sp, fl, bl, mask):
+    def forward(self, sp, gl):
         sp = normalize(sp)
-        fl = normalize(fl)
-        bl = normalize(bl)
+        gl = normalize(gl)
         
-        x_f = self.IntoFeature(sp, fl)
-        x_b = self.IntoFeature(sp, bl)
+        # fl = normalize(fl)
+        # bl = normalize(bl)
         
-        down_mask = F.interpolate(mask, size=x_f.size(2))
+        x = self.IntoFeature(sp, gl) # torch.Size([8, 512, 32, 32])
+        x = torch.cat((sp, x), dim=1) # torch.Size([8, 1024, 32, 32])
+        # x_f = self.IntoFeature(sp, fl)
+        # x_b = self.IntoFeature(sp, bl)
+        
+        # down_mask = F.interpolate(mask, size=x_f.size(2))
         # fg = down_mask*x_f
         # bg = (1-down_mask)*x_b
-        x = down_mask*x_f + (1-down_mask)*x_b
+        # x = down_mask*x_f + (1-down_mask)*x_b
         
-        x = self.gen1(x, fl, bl, mask)
-        x = self.gen2(x, fl, bl, mask)
-        x = self.gen3(x, fl, bl, mask)
-        x = self.out(x)
+        # x = self.gen1(x, gl) # torch.Size([8, 128, 32, 32])
+        # x = self.gen2(x, gl) # torch.Size([8, 256, 32, 32])
+        # x = self.gen0(x, gl)
+        
+        x = self.gen1(x, gl) # torch.Size([8, 512, 32, 32])
+        x = self.gen2(x, gl) # torch.Size([8, 256, 64, 64])
+        x = self.gen3(x, gl) # torch.Size([8, 128, 128, 128])
+        x = self.gen4(x, gl) # torch.Size([8, 64, 256, 256])
+        x = self.out(x) #torch.Size([8, 3, 256, 256])
         
         return x
 
@@ -462,7 +547,7 @@ class HarmonyRecBlocks(nn.Module):
         return x
 
 class MLP(nn.Module):
-    def __init__(self, input_dim, output_dim, dim, n_blk, norm='none', activ='relu'):
+    def __init__(self, input_dim, output_dim, n_blk, norm='none', activ='relu'):
 
         super(MLP, self).__init__()
         self.model = []
@@ -481,18 +566,20 @@ class MLP(nn.Module):
 # Basic Blocks
 ##################################################################################
 class ResBlock(nn.Module):
-    def __init__(self, dim, norm='in', activation='relu', pad_type='zero'):
+    def __init__(self, in_dim, out_dim, k=3, s=1, p=1, norm='in', activation='relu', pad_type='zero'):
         super(ResBlock, self).__init__()
 
         model = []
-        model += [Conv2dBlock(dim ,dim, 3, 1, 1, norm=norm, activation=activation, pad_type=pad_type)]
-        model += [Conv2dBlock(dim ,dim, 3, 1, 1, norm=norm, activation='none', pad_type=pad_type)]
+        model += [Conv2dBlock(in_dim, in_dim, k, s, p, norm=norm, activation=activation, pad_type=pad_type)]
+        model += [Conv2dBlock(in_dim, out_dim, 3, 1, 1, norm=norm, activation='none', pad_type=pad_type)]
         self.model = nn.Sequential(*model)
+        
+        self.skip = Conv2dBlock(in_dim, out_dim, k, s, p, norm=norm, activation='none', pad_type=pad_type)
 
     def forward(self, x):
-        residual = x
+        residual = self.skip(x)
         out = self.model(x)
-        out += residual
+        out = (out+residual) / math.sqrt(2)
         return out
 
 class LightingResBlock(nn.Module):
@@ -1902,34 +1989,38 @@ class GeneratorBlock(nn.Module):
 
         self.activation = nn.LeakyReLU(0.2)
 
-    def forward(self, x, fstyle, bstyle, mask): #inoise
+    def forward(self, x, istyle): #inoise
         if exists(self.upsample):
             x = self.upsample(x)
             
-        down_mask = F.interpolate(mask, size=x.size(2))
+        # down_mask = F.interpolate(mask, size=x.size(2))
 
         # inoise = inoise[:, :x.shape[2], :x.shape[3], :]
         # noise1 = self.to_noise1(inoise).permute((0, 3, 2, 1))
         # noise2 = self.to_noise2(inoise).permute((0, 3, 2, 1))
-        fstyle1 = self.to_style1(fstyle) #torch.Size([8, 8])
-        fx = self.conv1(x*down_mask, fstyle1)
+        style1 = self.to_style1(istyle) #torch.Size([8, 8])
+        
+        # fx = self.conv1(x*down_mask, fstyle1)
         # x = self.activation(x + noise1)
-        fx = self.activation(fx)
+        # fx = self.activation(fx)
         
-        bstyle1 = self.to_style1(bstyle)
-        bx = self.conv1(x*(1-down_mask), bstyle1)
-        bx = self.activation(bx)
+        x = self.conv1(x, style1)
+        x = self.activation(x)
+        
+        # bstyle1 = self.to_style1(bstyle)
+        # bx = self.conv1(x*(1-down_mask), bstyle1)
+        # bx = self.activation(bx)
 
-        fstyle2 = self.to_style2(fstyle) #torch.Size([8, 256])
-        fx = self.conv2(fx*down_mask, fstyle2) #
-        fx = self.activation(fx)
+        style2 = self.to_style2(istyle) #torch.Size([8, 256])
+        x = self.conv2(x, style2) #
+        x = self.activation(x)
         
-        bstyle2 = self.to_style2(bstyle)
-        bx = self.conv2(bx*(1-down_mask), bstyle2)
-        bx = self.activation(bx)
+        # bstyle2 = self.to_style2(bstyle)
+        # bx = self.conv2(bx*(1-down_mask), bstyle2)
+        # bx = self.activation(bx)
         # x = self.activation(x + noise2)
 
-        x = fx*down_mask+bx*(1-down_mask)
+        # x = fx*down_mask+bx*(1-down_mask)
         return x
     
 class Conv2DMod(nn.Module):
@@ -2391,3 +2482,18 @@ class PixelDiscriminator(nn.Module):
         """Standard forward."""
         return self.net(input)
 
+# class MLP(nn.Module):
+
+#     def __init__(self, ch, n_mix):
+#         super().__init__()
+#         self._ch = ch
+#         self._n_mix = n_mix
+#         net = []
+#         for i in range(self._n_mix):
+#             net += [SpectralNorm(nn.Linear(self._ch, self._ch))]
+#             net += [nn.LeakyReLU(0.2, True)]
+#         net += [SpectralNorm(nn.Linear(self._ch, 1))]
+#         self.net = nn.Sequential(*net)
+
+#     def forward(self, input):
+#         return self.net(input)
