@@ -15,6 +15,8 @@ def main():
 
     cfg.phase = 'test'
     cfg.batch_size = int(cfg.batch_size / max(1, cfg.NUM_GPUS))
+    cfg.isTrain = False
+    cfg.train_data = False
     launch_job(cfg=cfg, init_method=cfg.init_method, func=test)
 
 

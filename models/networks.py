@@ -17,7 +17,7 @@ class Identity(nn.Module):
         return x
 
 
-def get_norm_layer(norm_type='instance'):
+def get_norm_layer(norm_type='batch'):
     """Return a normalization layer
 
     Parameters:
@@ -57,6 +57,8 @@ def get_scheduler(optimizer, opt):
         scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda_rule)
     elif opt.lr_policy == 'step':
         scheduler = lr_scheduler.StepLR(optimizer, step_size=opt.lr_decay_iters, gamma=0.1)
+    elif opt.lr_policy == 'multistep':
+        scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[160, 175], gamma=0.1)
     elif opt.lr_policy == 'plateau':
         scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.2, threshold=0.01, patience=5)
     elif opt.lr_policy == 'cosine':
@@ -66,7 +68,7 @@ def get_scheduler(optimizer, opt):
     return scheduler
 
 
-def init_weights(net, init_type='normal', init_gain=0.02):
+def init_weights(net, init_type='kaiming', init_gain=0.02): #normal
     """Initialize network weights.
 
     Parameters:
@@ -100,7 +102,7 @@ def init_weights(net, init_type='normal', init_gain=0.02):
     net.apply(init_func)  # apply the initialization function <init_func>
     return net
 
-def init_net(net, init_type='normal', init_gain=0.02, gpu_ids=[], opt=None):
+def init_net(net, init_type='kaiming', init_gain=0.02, gpu_ids=[], opt=None):
     """Initialize a network: 1. register CPU/GPU device (with multi-GPU support); 2. initialize the network weights
     Parameters:
         net (network)      -- the network to be initialized

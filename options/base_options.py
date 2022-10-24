@@ -30,7 +30,7 @@ class BaseOptions():
         parser.add_argument('--output_nc', type=int, default=3, help='# of output image channels: 3 for RGB and 1 for grayscale')
         parser.add_argument('--ngf', type=int, default=64, help='# of gen filters in the last conv layer')
         parser.add_argument('--netG', type=str, default='base', help='specify generator architecture [resnet_9blocks | resnet_6blocks | unet_256 | unet_128]')
-        parser.add_argument('--norm', type=str, default='instance', help='instance normalization or batch normalization [instance | batch | none]')
+        parser.add_argument('--norm', type=str, default='batch', help='instance normalization or batch normalization [instance | batch | none]')
         parser.add_argument('--init_type', type=str, default='normal', help='network initialization [normal | xavier | kaiming | orthogonal]')
         parser.add_argument('--init_gain', type=float, default=0.02, help='scaling factor for normal, xavier and orthogonal.')
         parser.add_argument('--no_dropout', action='store_true', help='no dropout for the generator')
@@ -39,8 +39,8 @@ class BaseOptions():
         parser.add_argument('--serial_batches', action='store_true', help='if true, takes images in order to make batches, otherwise takes them randomly')
         parser.add_argument('--num_threads', default=4, type=int, help='# threads for loading data')
         parser.add_argument('--batch_size', type=int, default=1, help='input batch size')
-        parser.add_argument('--load_size', type=int, default=256, help='scale images to this size')
-        parser.add_argument('--crop_size', type=int, default=256, help='then crop to this size')
+        parser.add_argument('--hr_size', type=int, default=1024, help='scale images to this size')
+        parser.add_argument('--lr_size', type=int, default=256, help='then crop to this size')
         parser.add_argument('--max_dataset_size', type=int, default=float("inf"), help='Maximum number of samples allowed per dataset. If the dataset directory contains more than max_dataset_size, only a subset is loaded.')
         parser.add_argument('--preprocess', type=str, default='none', help='scaling and cropping of images at load time [resize_and_crop | crop | scale_width | scale_width_and_crop | none]')
         parser.add_argument('--no_flip', action='store_true', help='if specified, do not flip the images for data augmentation')
@@ -51,23 +51,19 @@ class BaseOptions():
         parser.add_argument('--verbose', action='store_true', help='if specified, print more debugging information')
         parser.add_argument('--suffix', default='', type=str, help='customized suffix: opt.name = opt.name + suffix: e.g., {model}_{netG}_size{load_size}')
 
-        parser.add_argument('--n_downsample', type=int, default=3, help='min 2')
-        parser.add_argument('--enc_n_res', type=int, default=1, help='reflectance encoder resblock layers')
-        parser.add_argument('--dec_n_res', type=int, default=0, help='reflectance decoder resblock layers')
-        parser.add_argument('--pad_type', type=str, default='reflect', help='pad_type')
-        parser.add_argument('--activ', type=str, default='lrelu', help='activ')
+        # parser.add_argument('--n_downsample', type=int, default=3, help='min 2')
+        # parser.add_argument('--enc_n_res', type=int, default=0, help='reflectance encoder resblock layers')
+        # parser.add_argument('--dec_n_res', type=int, default=0, help='reflectance decoder resblock layers')
+        # parser.add_argument('--pad_type', type=str, default='reflect', help='pad_type')
+        # parser.add_argument('--activ', type=str, default='lrelu', help='activ')
 
-        parser.add_argument('--light_mlp_dim', type=int, default=8, help='light dimensions')
-        parser.add_argument('--illumination_n_res', type=int, default=4, help='light transfer layers')
+        # parser.add_argument('--light_mlp_dim', type=int, default=8, help='light dimensions')
+        # parser.add_argument('--illumination_n_res', type=int, default=4, help='light transfer layers')
 
-        parser.add_argument('--inharmonyfree_norm', type=str, default='ln', help='inharmonyfree encoder norm type')
-        parser.add_argument('--ifm_n_res', type=int, default=0, help='inharmonyfree resblock layers')
-        parser.add_argument('--inharmonyfree_embed_layers', type=int, default=2, help='inharmonyfree block layers')
-        parser.add_argument('--lamda', type=int, default=10, help='lamda')
-        parser.add_argument('--loss_RH', action='store_true', help='whether saves model by iteration')
-        parser.add_argument('--loss_IS', action='store_true', help='whether saves model by iteration')
-        parser.add_argument('--loss_IH', action='store_true', help='whether saves model by iteration')
-
+        # parser.add_argument('--inharmonyfree_norm', type=str, default='ln', help='inharmonyfree encoder norm type')
+        # parser.add_argument('--ifm_n_res', type=int, default=0, help='inharmonyfree resblock layers')
+        # parser.add_argument('--inharmonyfree_embed_layers', type=int, default=2, help='inharmonyfree block layers')
+        # parser.add_argument('--lamda', type=int, default=10, help='lamda')
 
         parser.add_argument('--local_rank', type=int, default=-1, help='number of GPUs to use')
         parser.add_argument('--init_method', type=str, default='tcp://127.0.0.1:', help='process port')
@@ -77,10 +73,14 @@ class BaseOptions():
         parser.add_argument('--DIST_BACKEND', type=str, default='nccl', help='DIST_BACKEND')
         parser.add_argument('--RNG_SEED', type=int, default=1, help='NUM_SHARDS')
         
-        parser.add_argument("--spatial_code_ch", default=8, type=int)
-        parser.add_argument("--global_code_ch", default=1024, type=int)
+        # pretrained models
+        parser.add_argument('--hrnet_path', type=str, default='pretrained/hrnetv2_w18_imagenet_pretrained.pth')
+        
+        parser.add_argument('--isTrain', type=bool, default=True)
+        parser.add_argument('--train_data', type=bool, default=True)
 
         self.initialized = True
+        # self.train_data = True
         return parser
 
     def gather_options(self):
@@ -99,13 +99,13 @@ class BaseOptions():
         # modify model-related parser options
         model_name = opt.model
         model_option_setter = models.get_option_setter(model_name)
-        parser = model_option_setter(parser, self.isTrain)
-        opt, _ = parser.parse_known_args()  # parse again with new defaults
+        parser = model_option_setter(parser, opt.train_data) #self.isTrain
+        opt, _ = parser.parse_known_args()  # parse axgain with new defaults
 
         # modify dataset-related parser options
         dataset_name = opt.dataset_mode
         dataset_option_setter = data.get_option_setter(dataset_name)
-        parser = dataset_option_setter(parser, self.isTrain)
+        parser = dataset_option_setter(parser, opt.train_data) #self.isTrain
 
         # save and return the parser
         self.parser = parser
@@ -139,7 +139,7 @@ class BaseOptions():
     def parse(self):
         """Parse our options, create checkpoints directory suffix, and set up gpu device."""
         opt = self.gather_options()
-        opt.isTrain = self.isTrain   # train or test
+        # opt.isTrain = self.isTrain   # train or test
 
         # process opt.suffix
         if opt.suffix:

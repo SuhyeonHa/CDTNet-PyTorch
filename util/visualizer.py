@@ -5,6 +5,7 @@ import ntpath
 import time
 from . import util, html
 from subprocess import Popen, PIPE
+import torch
 
 if sys.version_info[0] == 2:
     VisdomExceptionBase = Exception
@@ -118,6 +119,7 @@ class Visualizer():
                 images = []
                 idx = 0
                 for label, image in visuals.items():
+                    image = torch.nn.functional.interpolate(image, size=(self.win_size))
                     image_numpy = util.tensor2im(image)
                     label_html_row += '<td>%s</td>' % label
                     images.append(image_numpy.transpose([2, 0, 1]))

@@ -50,14 +50,14 @@ class BaseModel(ABC):
         self.metric = 0  # used for learning rate policy 'plateau'
 
     @staticmethod
-    def modify_commandline_options(parser, is_train):
+    def modify_commandline_options(parser, is_train): #is_train
         """Add new model-specific options, and rewrite default values for existing options.
 
         Parameters:
             parser          -- original option parser
             is_train (bool) -- whether training phase or test phase. You can use this flag to add training-specific or test-specific options.
 
-        Returns:
+        Returns:x
             the modified parser.
         """
         return parser
@@ -183,8 +183,8 @@ class BaseModel(ABC):
                 save_path = os.path.join(self.save_dir, save_filename)
                 net = getattr(self, 'net' + name)
                 if torch.cuda.is_available():
-                    if self.NUM_GPUS > 1:
-                        torch.save(net.module.state_dict(), save_path) #TODO: only for stn
+                    if self.NUM_GPUS > 1 and name == 'G':
+                        torch.save(net.module.state_dict(), save_path)
                     else:
                         torch.save(net.state_dict(), save_path)
                 else:

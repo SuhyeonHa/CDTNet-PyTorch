@@ -64,10 +64,10 @@ def create_dataset(opt):
     print("dataset [%s] was created" % type(dataset).__name__)
 
     # batch_size = int(opt.batch_size / max(1, opt.NUM_GPUS))
-    if opt.isTrain==True:
+    if opt.train_data==True:
         shuffle = True
         drop_last = True
-    elif opt.isTrain==False:
+    elif opt.train_data==False:
         shuffle = False
         drop_last = False
 
@@ -101,10 +101,10 @@ class CustomDatasetDataLoader():
         print("dataset [%s] was created" % type(self.dataset).__name__)
 
         batch_size = int(opt.batch_size / max(1, opt.NUM_GPUS))
-        if opt.isTrain==True:
+        if opt.train_data==True:
             shuffle = True
             drop_last = True
-        elif opt.isTrain==False:
+        elif opt.train_data==False:
             shuffle = False
             drop_last = False
 
