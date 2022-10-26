@@ -18,7 +18,7 @@ Unofficial implementation of "High-Resolution Image Harmonization via Collaborat
 1. Download HRNet-W18-C model(hrnetv2_w18_imagenet_pretrained.pth) in [HRNets](https://github.com/HRNet/HRNet-Image-Classification)
 2. Put it in the `pretrained` folder
 
-## **Base Model**
+## Usage
 
 - Train
 ```bash 
