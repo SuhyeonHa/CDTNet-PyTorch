@@ -80,5 +80,5 @@ CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" python test.py --model iih_base --name ii
 
 </table>
 
-# Acknowledgement
+## Acknowledgement
 We borrowed some of the data modules and model functions from repo of [IntrinsicHarmony](https://github.com/zhenglab/IntrinsicHarmony), [iSSAM](https://github.com/saic-vul/image_harmonization), and [3DLUT](https://github.com/HuiZeng/Image-Adaptive-3DLUT).
